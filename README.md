@@ -1,4 +1,4 @@
-# Snowflake Snowpipe Pipeline Project
+# Snowflake Pipeline Project
 
 This repository contains a Snowflake pipeline project that leverages Snowpipe, tasks, and streams to handle data ingestion, transformation, and loading. Below are the setup instructions:
 

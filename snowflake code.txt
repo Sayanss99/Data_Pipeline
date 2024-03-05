@@ -1,0 +1,105 @@
+-- create Database and schemas
+create DATABASE DB1;
+USE DATABASE DB1;
+CREATE SCHEMA TS1;
+USE SCHEMA TS1;
+
+-- create external stage
+CREATE OR REPLACE stage S3_STAGE url = 's3://{}/'
+credentials = (aws_key_id = '{}' aws_secret_key = '{}');
+
+-- create initial table
+CREATE TABLE DB1.TS1.PERSON_NESTED
+(
+    INPUT_DATA VARIANT
+);
+-- check contents of the table
+SELECT * FROM DB1.TS1.PERSON_NESTED;
+
+-- create json file format
+CREATE FILE FORMAT DB1.TS1.JSON 
+TYPE = 'JSON' COMPRESSION = 'AUTO';
+
+-- create snowpipe
+CREATE OR REPLACE PIPE DB1.TS1.PERSON_PIPE auto_ingest = true AS
+    COPY INTO DB1.TS1.PERSON_NESTED
+    FROM @DB1.TS1.S3_STAGE/DATA/PERSON
+    file_format = (FORMAT_NAME = 'DB1.TS1.JSON');
+
+--  check pipe description for SQS arn
+DESCRIBE PIPE DB1.TS1.PERSON_PIPE;
+
+-- check pipe status
+SELECT system$pipe_status('DB1.TS1.PERSON_PIPE');
+-- check copy status of the pipe
+SELECT * from table(information_schema.copy_history(table_name=> 'PERSON_NESTED', start_time => dateadd(hours, -1, current_timestamp())));
+
+-- check contents of the table
+SELECT * from DB1.TS1.PERSON_NESTED;
+
+-- create stream object on the table
+CREATE STREAM DB1.TS1.PERSON_NESTED_STREAM ON TABLE DB1.TS1.PERSON_NESTED;
+
+-- create list of target tables
+CREATE TABLE DB1.TS1.PERSON_MASTER
+(
+    ID VARCHAR, LOCATION VARCHAR, NAME VARCHAR, AGE NUMBER, ZIP VARCHAR
+);
+
+CREATE OR REPLACE TABLE DB1.TS1.PERSON_LOCATION
+(
+    ID VARCHAR,
+    NAME VARCHAR,
+    LOCATION VARCHAR,
+    ZIP VARCHAR
+);
+
+-- create procedure
+CREATE OR REPLACE PROCEDURE DB1.TS1.PERSON_PROC()
+RETURNS VARCHAR
+EXECUTE AS CALLER
+AS
+BEGIN
+    -- Load data to PERSON_MASTER
+    INSERT INTO DB1.TS1.PERSON_MASTER
+    SELECT INPUT_DATA:ID::String, INPUT_DATA:Location::String, INPUT_DATA:Name::String, INPUT_DATA:age::Number,INPUT_DATA:zip::String
+    FROM DB1.TS1.PERSON_NESTED_STREAM;
+
+    -- Load data to person_location
+    MERGE INTO DB1.TS1.PERSON_LOCATION as target
+    USING (select * FROM DB1.TS1.PERSON_MASTER) AS source
+    ON target.ID = source.ID
+    WHEN MATCHED THEN
+    UPDATE SET
+        target.NAME =source.NAME,
+        target.LOCATION = source.LOCATION,
+        target.ZIP = source.ZIP
+    WHEN NOT MATCHED THEN
+        INSERT (ID, NAME, LOCATION, ZIP)
+        VALUES (source.ID, source.NAME, source.LOCATION, source.ZIP);
+
+    RETURN 'DONE';
+END;
+
+-- creating task for scheduling the procedure
+CREATE OR REPLACE TASK DB1.TS1.PERSON_TASK1
+    WAREHOUSE = COMPUTE_WH
+    SCHEDULE = '1 minute'
+WHEN
+    SYSTEM$STREAM_HAS_DATA('DB1.TS1.PERSON_NESTED_STREAM')
+AS
+    CALL DB1.TS1.PERSON_PROC();
+
+-- RUN task
+ALTER TASK DB1.TS1.PERSON_TASK1 SUSPEND;
+
+
+-- TEST the PIPELINE
+
+SELECT system$pipe_status('DB1.TS1.PERSON_PIPE');
+
+SELECT * FROM DB1.TS1.PERSON_MASTER;
+
+SELECT * FROM DB1.TS1.PERSON_LOCATION;
+
+SELECT * FROM DB1.TS1.PERSON_NESTED_STREAM;

@@ -4,7 +4,7 @@ This repository contains a Snowflake pipeline project that leverages Snowpipe, t
 
 ## Architecture
 
-![Project Architecture]()
+![Project Architecture](https://github.com/Sayanss99/Data_Pipeline/blob/main/Architecture.png)
 
 ## Prerequisites
 
